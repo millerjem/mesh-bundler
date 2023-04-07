@@ -1,0 +1,122 @@
+# This needs to be either a valid Istio Gloo Portal license (when targeting the Istio Gateway),
+# or a valid Gloo Edge Enterprise license (when targeting the Gloo Edge).
+licenseKey:
+  value: ""
+# Use this if you wish to reference an existing license secret
+#  secretRef:
+#    name: license
+#    namespace: gloo-portal
+#    key: license-key
+
+# Settings for the Gloo Portal integration with Gloo Edge Enterprise
+glooEdge:
+  enabled: true
+
+# Settings for the Gloo Portal integration with Istio
+istio:
+  enabled: false
+  # The set of [Istio Gateways](https://istio.io/latest/docs/reference/config/networking/gateway/)
+  # that should be used to expose API Products and Portals.
+  # Gateway resource names should be in the <gateway namespace>/<gateway name> format.
+  gateways:
+  - name: istio-system/istio-ingressgateway
+    # Gloo Portal needs to know the port on which the proxy workloads for a gateway listen on.
+    # The workload ports can be different from the ones advertised in the gateway `servers` attribute. If this
+    # is the case, a port mapping must be specified here. You can use the relevant `port`/`targetPort` values
+    # from the Kubernetes Service that exposes the gateway.
+    # In case the port values are the same, no mapping is needed for a port.
+    ports:
+    - port: 80
+      targetPort: 8080
+    - port: 443
+      targetPort: 8443
+
+# Settings for the Gloo Portal integration with Gloo Mesh.
+glooMesh:
+  enabled: false
+  # The cluster where the Gloo Portal service is running.
+  # By default, this is automatically determined using Gloo Mesh's service discovery.
+  # Specifying a non-blank value here overrides this automatic value with the given value. 
+  clusterName: ""
+
+# Set this value to `true` to perform a namespaced installation of Gloo Portal.
+# This will create Roles/RoleBindings instead of ClusterRoles/ClusterRoleBindings and configure
+# the Gloo Portal controller to only look for resources in the installation namespace.
+singleNamespace: false
+
+# Settings for the Gloo Portal controller
+glooPortal:
+  logging:
+    level: info
+  image:
+    pullPolicy: IfNotPresent
+    registry: gcr.io/gloo-portal
+    repository: gloo-portal-controller
+    tag: 1.2.14
+  resources:
+    requests:
+      cpu: 125m
+      memory: 256Mi
+  # set this to override defaultSecurityContext.floatingUserId
+  # floatingUserId: true
+  ports:
+    grpc: 8080
+  env:
+  - name: POD_NAMESPACE
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.namespace
+
+# Settings for the Gloo Portal admin dashboard
+adminDashboard:
+  enabled: true
+  # set this to override defaultSecurityContext.floatingUserId
+  # floatingUserId: false
+  components:
+    envoy:
+      image:
+        registry: gcr.io/gloo-portal
+        repository: gloo-portal-admin-envoy
+        tag: 1.2.14
+    ui:
+      image:
+        registry: gcr.io/gloo-portal
+        repository: gloo-portal-admin-ui
+        tag: 1.2.14
+    server:
+      image:
+        registry: gcr.io/gloo-portal
+        repository: gloo-portal-admin-server
+        tag: 1.2.14
+  service:
+    type: ClusterIP
+    httpPort: 8080
+    # Set this value if you are using a NodePort service
+#    httpNodePort: 8081
+
+# SecurityContext that will be used for kubernetes Deployments
+defaultSecurityContext:
+  runAsUser: 10101
+  # set this to true to allow the cluster to dynamically set a user ID
+  floatingUserId: false
+
+# Set this value to `true` if you are installing using Helm 2.
+crd:
+  create: false
+
+# Set monetization to `true` and specify the ConfigMap used to define monetization storage if you
+# have monetization set up and would like to display usage data in the admin dashboard.
+monetization:
+  enabled: false
+# configMapName: monetization-config
+# secretName: monetization-secret
+
+# To add a custom Certificate Authority (CA) to the `gloo-portal-controller` deployment, create a secret
+# that contains the custom CA certificate and set `customCa.secretName` to its name and `customCa.secretKey` to
+# the filename of the certificate within the secret (`customCa.secretKey` defaults to `custom-ca.cert`)
+# This allows the Gloo Portal controller to integrate with HTTP servers (e.g. OIDC identity providers) that
+# require client certificates to be signed by a custom CA
+# customCa:
+#   secretName: my-ca-secret
+#   secretKey: my-ca.cert
+

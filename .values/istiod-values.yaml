@@ -1,0 +1,26 @@
+#.Values.pilot for discovery and mesh wide config
+
+## Discovery Settings
+pilot:
+  autoscaleEnabled: true
+  autoscaleMin: 1
+  autoscaleMax: 5
+  replicaCount: 1
+  rollingMaxSurge: 100%
+  rollingMaxUnavailable: 25%
+
+  hub: us-docker.pkg.dev/gloo-mesh/istio-a7d0a87b8a81
+  tag: 1.17.1-solo
+  # variant: "distroless"
+
+global:
+  # Default hub for Istio images.
+  # Releases are published to docker hub under 'istio' project.
+  # Dev builds from prow are on gcr.io
+  hub: us-docker.pkg.dev/gloo-mesh/istio-a7d0a87b8a81
+  # Default tag for Istio images.
+  tag: 1.17.1-solo
+  # Variant of the image to use.
+  # Currently supported are: [debug, distroless]
+  # variant: "distroless"
+

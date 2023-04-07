@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+
+shopt -s nocasematch
+
+if [[ ! "$GLOO_LICENSE_KEY" ]]; then
+  echo -n "Enter a valid Gloo license key: "
+  read GLOO_LICENSE_KEY
+fi
+
+PS3="Select a product to download: "
+
+# text
+txtred='\e[0;31m'
+txtgrn='\e[0;32m'
+txtylw='\e[0;33m'
+txtrst='\033[0m' 
+
+products=(
+  'Gloo Gateway'
+  'Gloo Mesh Enterprise'
+  'Gloo Edge'
+  'Gloo Network'
+)
+
+istio_releases=(
+  '1.17'
+  '1.16'
+)
+
+function pSelect {
+  items=("$@")
+  select item in "${items[@]}"
+  do
+      # $REPLY
+      [[ -n $item ]] && {
+        echo Marked ${items[$REPLY-1]} for download
+        break 
+      } || {
+          echo -e "${txtred}Invalid selction${txtrst}"
+      }
+done  
+}
+
+# pSelect "${products[@]}"
+# pSelect "${istio_releases[@]}"
+
+# select product in "${products[@]}"
+# do
+#     # $REPLY
+#     [[ -n $product ]] && {
+#       echo "Marked $product for download"
+#       break 
+#     } || {
+#         echo -e "${txtred}Invalid selction${txtrst}"
+#     }
+# done
+
+# select release in "${istio_releases[@]}"
+# do
+#     [[ -n $release ]] && {
+#       echo "Marked Istio release: $release"
+#       break
+#       } || {
+#         echo -e "${txtred}Invalid selction${txtrst}"
+#     }
+# done
+
+invalid() {
+  echo -e ${txtred}
+  usage
+  echo -e ${txtrst}
+}
+
+warning() {
+  echo 
+  echo -e ${txtred}$1${txtrst}
+  echo
+
+  read -p "Continue (y/n)?" choice
+  case "$choice" in 
+    y|Y ) ;;
+    n|N ) exit 1;;
+    * ) echo "Invalid input";;
+  esac
+}
+
+info() {
+  echo 
+  echo -e ${txtylw}$1${txtrst}
+}
+
+mkArchive() {
+  dir=$1
+  bundle_prefix=$1
+  images=$2
+
+  [[ -f ${dir}/${bundle_prefix}-bundle.tar ]] && {
+    warning "Skipping bundle ${dir}/${bundle_prefix}-bundle.tar already exists"
+  } || {
+    echo "Building archive file ${bundle_prefix}-bundle.tar"
+    echo "${images}" > ${dir}/images.txt
+    docker save -o ${dir}/${bundle_prefix}-bundle.tar ${images}
+
+    (cd ${dir} && tar -rf ${bundle_prefix}-bundle.tar images.txt)
+    
+      # if [[ ! -f "$MKPATH/$name-$version.tar" ]]; then
+      #     image_archive=$MKPATH/${chart/:/-}.tar
+      #     aws s3 cp $image_archive s3://solo-io.ironbank/$image_archive
+      #     docker login
+      #     docker pull $image
+      #     docker save $image -o $MKPATH/${chart/:/-}.tar
+      # fi
+  }
+}
+
+export -f mkArchive;
+
+zarfPackage() {
+    // Format images in zarf format
+}
+
+push() {
+  file=$1
+  registry=$2
+
+  # When using Mac OS X its requires gsed
+  # Default is sed
+  cmd = "sed"
+  [[ "$OSTYPE" == "darwin"* ]] && {
+    cmd="gsed"
+    # Verify gsed is installed 
+    status=`which gsed`
+    [ ! $status -eq 0 ] && warn "Please install gnu-sed ex.: brew install gnu-sed" 
+  }
+
+  # Command to execute
+  info "Importing images from bundle archive"
+  #docker import $file 2>&1 1>/dev/null
+  # tar -Oxf $file images.txt | xargs -I {} bash -c "echo {} | $cmd -e 's/gcr\.io\/\|docker\.io\/\|quay\.io\///' | xargs -I % bash -c 'echo Image $image; docker tag $image $registry/%'"
+  images=`tar -Oxf $file images.txt`
+  for image in ${images}; do
+    tagged="$registry/$(echo $image | $cmd -e 's/gcr\.io\/\|docker\.io\/\|quay\.io\/\|us\-docker\.pkg\.dev\///')"
+    docker tag $image $tagged
+    docker push $tagged
+  done
+}
+
+packages=(
+  "gloo-mesh-enterprise/gloo-mesh-enterprise:2.2.6"
+  "istio/istiod:1.17.1"
+  "istio/gateway:1.17.1"
+  "istio-operator:1.17.1"
+  #"gloo/gloo:1.13.1"
+  #"glooe/gloo-ee:1.13.1"
+  #"gloo-mesh-agent/gloo-mesh-agent:2.1.3"
+  # Not required only used for CRDs
+  # "istio/base:1.16.1"
+)
+
+declare -A repos=(
+  ["gloo"]="https://storage.googleapis.com/solo-public-helm"
+  ["glooe"]="https://storage.googleapis.com/gloo-ee-helm"
+  ["gloo-mesh-enterprise"]="https://storage.googleapis.com/gloo-mesh-enterprise/gloo-mesh-enterprise"
+  ["gloo-mesh-agent"]="https://storage.googleapis.com/gloo-mesh-enterprise/gloo-mesh-agent"
+  ["istio"]="https://istio-release.storage.googleapis.com/charts"
+  ["istio-operator"]="istio-1.17.1/manifests/charts/istio-operator"
+)
+
+addHelmRepos() {
+  for key in ${!repos[@]}; do
+    # Verify helm reference is a url
+    url=${repos[${key}]}
+    [[ "$url" =~ ^(https?).* ]] && {
+      helm repo add $key $url
+      helm repo update $key
+    }
+  done
+}
+
+listPackages() {
+  echo "Helm packages in the default config:"
+  echo
+  for package in ${packages[@]}; do
+    echo "- $package"
+  done
+}
+
+pull() {
+
+  info "Adding helm repositories listed in packages"
+  addHelmRepos
+    
+  for package in ${packages[@]}; do
+    echo "Archiving... $package"
+    chart=${package%:*}
+    version=${package#*:}
+    repo=${chart#*/}
+    
+    mkdir -p $repo
+
+    # Generate the new options for this chart
+    CHART_OPTIONS=""
+
+    case "$chart" in
+      # Enterprise products require a license key
+      "gloo-mesh-enterprise/gloo-mesh-enterprise" | "glooe/gloo-ee" )
+        CHART_OPTIONS+=" --set licenseKey=${GLOO_LICENSE_KEY}"
+        CHART_OPTIONS+=" --set license_key=${GLOO_LICENSE_KEY}"
+        ;;&
+      "gloo-portal/gloo-portal")
+        #CHART_OPTIONS+=" --set licenseKey.secretRef=licenseKey"
+        CHART_OPTIONS+=" --set licenseKey.value=${GLOO_LICENSE_KEY}"
+        ;;&
+      "istio-operator")
+        curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.17.1 TARGET_ARCH=x86_64 sh -
+        CHART_OPTIONS+="istio-1.17.1/manifests/charts/istio-operator"
+        ;;
+      *)
+        # Check for any values.yaml
+        if [[ -f ./.values/${chart#*/}-values.yaml ]]; then
+          CHART_OPTIONS+=" --values ./.values/${chart#*/}-values.yaml"
+        fi
+
+        # Add version based on chart array
+        CHART_OPTIONS+=" --version ${version}"
+        ;;
+    esac
+
+    # Find the container images
+    # .spec.template.spec.containers.image
+    echo "Querying helm chart $chart..."
+    images="`helm template $chart $CHART_OPTIONS | yq '.spec.template.spec.containers[].image' | grep -v -e "---"`"
+    # Istio proxy requires additional image in a ConfigMap under data.config
+    [ "$repo" == "istiod" ] && {
+      istio_proxy=$(helm template istio/istiod --set global.pilot.tag=1.17.1-solo --set global.pilot.hub=us-docker.pkg.dev/gloo-mesh/istio-a7d0a87b8a81 | yq '.data|.values | select(.)' | jq -r '. | "\(.global.pilot.hub)/\(.global.proxy.image):\(.global.pilot.tag)" | @sh')
+      images+=" ${istio_proxy//\'/}"
+    }
+    
+    mkArchive "$repo" "$images"
+
+  done
+}
+
+# Capture args
+usage() {
+  cat <<EOF
+  Usage: bundle [options]
+    -d     Download meshctl options are [linux|darwin]
+    -p     Prints a listing of helm packages
+    -a     Builds an archive for each helm package
+    -f     Bundle archive
+    -r     Docker registry and port (default value is localhost:5000)
+EOF
+  exit 1;
+}
+
+while getopts ":hpad:f:r:" options; do         
+
+  case "${options}" in
+    d)
+      OS=${OPTARG}
+      GOARCH=amd64
+      [[ $OS == "linux" || $OS == "darwin" ]] && {
+        gloo_mesh_version=v2.2.6
+        filename="meshctl-${OS}-${GOARCH}"
+        wget https://storage.googleapis.com/meshctl/${gloo_mesh_version}/${filename}
+      } || {
+        invalid
+      }
+      ;;
+    a) 
+      pull
+      ;;
+    f)
+      FILE=${OPTARG}
+      REGISTRY="localhost:5000"
+      [[ ! -f $FILE ]] && warning "File does not exist"
+      ;;
+    r)
+      REGISTRY=${OPTARG}  
+      ;;
+    :)
+      echo "Error: -${OPTARG} requires an argument."
+      usage
+      ;;
+    p)
+      listPackages
+      ;;
+    h)
+      usage
+      ;;
+  esac
+done
+
+[[ ${OPTIND} == 1 ]] && usage 
+
+[[ ! -z $FILE ]] && {
+  echo "Pushing images to $REGISTRY..."
+  push $FILE $REGISTRY
+}
