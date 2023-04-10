@@ -168,12 +168,12 @@ packages=(
   "gloo-mesh-enterprise/gloo-mesh-enterprise:2.2.6"
   "istio/istiod:1.17.1"
   "istio-operator:1.17.1"
-  #"istio/gateway:1.17.1"
-  "gloo/gloo:1.13.1"
-  "glooe/gloo-ee:1.13.1"
   "gloo-mesh-agent/gloo-mesh-agent:2.2.6"
+  #"gloo/gloo:1.13.1"
+  #"glooe/gloo-ee:1.13.1"
   # Not required only used for CRDs
   # "istio/base:1.16.1"
+  #"istio/gateway:1.17.1"
 )
 
 declare -A repos=(
