@@ -2,6 +2,9 @@
 
 shopt -s nocasematch
 
+# Defaults 
+BUNDLES_DIR=bundles
+
 if [[ ! "$GLOO_LICENSE_KEY" ]]; then
   echo -n "Enter a valid Gloo license key: "
   read GLOO_LICENSE_KEY
@@ -71,12 +74,20 @@ invalid() {
   echo -e ${txtrst}
 }
 
-warning() {
+halt() {
+  message=$1
   echo 
-  echo -e ${txtred}$1${txtrst}
+  echo -e ${txtred}$message${txtrst}
+  exit 1;
+}
+
+warning() {
+  message=$1
+  echo 
+  echo -e ${txtred}$message${txtrst}
   echo
 
-  read -p "Continue (y/n)?" choice
+  read -p "Skip and continue (y/n)? " choice
   case "$choice" in 
     y|Y ) ;;
     n|N ) exit 1;;
@@ -91,25 +102,26 @@ info() {
 
 mkArchive() {
   dir=$1
-  bundle_prefix=$1
+  bundle_prefix=${1#*/}
   images=$2
+  version=$3
 
-  [[ -f ${dir}/${bundle_prefix}-bundle.tar ]] && {
-    warning "Skipping bundle ${dir}/${bundle_prefix}-bundle.tar already exists"
+  bundle=${bundle_prefix}-${version}-bundle.tar
+
+  [[ -f ${dir}/${bundle_prefix}-${version}-bundle.tar ]] && {
+    warning "Skipping bundle ${dir}/${bundle} already exists"
   } || {
-    echo "Building archive file ${bundle_prefix}-bundle.tar"
-    echo "${images}" > ${dir}/images.txt
-    docker save -o ${dir}/${bundle_prefix}-bundle.tar ${images}
+    echo "Pulling container images"
+    for image in ${images[@]}; do
+      info "Pulling $image..."
+      docker pull $image
+    done
 
-    (cd ${dir} && tar -rf ${bundle_prefix}-bundle.tar images.txt)
-    
-      # if [[ ! -f "$MKPATH/$name-$version.tar" ]]; then
-      #     image_archive=$MKPATH/${chart/:/-}.tar
-      #     aws s3 cp $image_archive s3://solo-io.ironbank/$image_archive
-      #     docker login
-      #     docker pull $image
-      #     docker save $image -o $MKPATH/${chart/:/-}.tar
-      # fi
+    echo "Building archive file ${bundle}"
+    echo "${images}" > ${dir}/images.txt
+    docker save -o ${dir}/${bundle} ${images}
+
+    (cd ${dir} && tar -rf ${bundle} images.txt)    
   }
 }
 
@@ -125,22 +137,29 @@ push() {
 
   # When using Mac OS X its requires gsed
   # Default is sed
-  cmd = "sed"
+  sedcmd="sed"
   [[ "$OSTYPE" == "darwin"* ]] && {
-    cmd="gsed"
+    sedcmd="gsed"
     # Verify gsed is installed 
-    status=`which gsed`
-    [ ! $status -eq 0 ] && warn "Please install gnu-sed ex.: brew install gnu-sed" 
+    result=`which gsed`
+    [ -z $result ] && warning "Please install gsed ex.: brew install gnu-sed" 
   }
 
   # Command to execute
   info "Importing images from bundle archive"
-  #docker import $file 2>&1 1>/dev/null
-  # tar -Oxf $file images.txt | xargs -I {} bash -c "echo {} | $cmd -e 's/gcr\.io\/\|docker\.io\/\|quay\.io\///' | xargs -I % bash -c 'echo Image $image; docker tag $image $registry/%'"
+  docker import $file 2>&1 1>/dev/null
+
+  # Verify rgistry endpoint is reachable
+  response=`curl -sL -w "%{http_code}\\n" "http://$registry" -o /dev/null`
+  [[ $response == "000" ]] && response=`curl -skL -w "%{http_code}\\n" "https://$registry" -o /dev/null`
+  [[ $response == "000" ]] && halt "Registry is not online. Verify registry endpoint"
+
   images=`tar -Oxf $file images.txt`
   for image in ${images}; do
-    tagged="$registry/$(echo $image | $cmd -e 's/gcr\.io\/\|docker\.io\/\|quay\.io\/\|us\-docker\.pkg\.dev\///')"
+    tagged="$registry/$(echo $image | $sedcmd -e 's/gcr\.io\/\|docker\.io\/\|quay\.io\/\|us\-docker\.pkg\.dev\///')"
+    info "Tagging image as $tagged"
     docker tag $image $tagged
+    info "Pushing image $tagged"
     docker push $tagged
   done
 }
@@ -148,11 +167,11 @@ push() {
 packages=(
   "gloo-mesh-enterprise/gloo-mesh-enterprise:2.2.6"
   "istio/istiod:1.17.1"
-  "istio/gateway:1.17.1"
   "istio-operator:1.17.1"
-  #"gloo/gloo:1.13.1"
-  #"glooe/gloo-ee:1.13.1"
-  #"gloo-mesh-agent/gloo-mesh-agent:2.1.3"
+  #"istio/gateway:1.17.1"
+  "gloo/gloo:1.13.1"
+  "glooe/gloo-ee:1.13.1"
+  "gloo-mesh-agent/gloo-mesh-agent:2.2.6"
   # Not required only used for CRDs
   # "istio/base:1.16.1"
 )
@@ -171,6 +190,7 @@ addHelmRepos() {
     # Verify helm reference is a url
     url=${repos[${key}]}
     [[ "$url" =~ ^(https?).* ]] && {
+      info "Adding Helm repository $key using $url"
       helm repo add $key $url
       helm repo update $key
     }
@@ -185,7 +205,26 @@ listPackages() {
   done
 }
 
+# Download meshctl for darwin and linux
+download() {
+  for OS in darwin linux; do
+    GOARCH=amd64
+    [[ $OS == "linux" || $OS == "darwin" ]] && {
+      gloo_mesh_version=v2.2.6
+      filename="meshctl-${OS}-${GOARCH}"
+      [[ ! -f $BUNDLES_DIR/$filename-$gloo_mesh_version ]] && curl -# -L -o $BUNDLES_DIR/$filename-$gloo_mesh_version https://storage.googleapis.com/meshctl/${gloo_mesh_version}/${filename}
+    } || {
+      invalid
+    }
+  done
+}
+
 pull() {
+
+  mkdir -p $BUNDLES_DIR
+
+  info "Downloading meshctl cli tooling"
+  download
 
   info "Adding helm repositories listed in packages"
   addHelmRepos
@@ -194,7 +233,7 @@ pull() {
     echo "Archiving... $package"
     chart=${package%:*}
     version=${package#*:}
-    repo=${chart#*/}
+    repo=${BUNDLES_DIR}/${chart#*/}
     
     mkdir -p $repo
 
@@ -236,7 +275,7 @@ pull() {
       images+=" ${istio_proxy//\'/}"
     }
     
-    mkArchive "$repo" "$images"
+    mkArchive "$repo" "$images" "$version"
 
   done
 }
@@ -245,35 +284,23 @@ pull() {
 usage() {
   cat <<EOF
   Usage: bundle [options]
-    -d     Download meshctl options are [linux|darwin]
     -p     Prints a listing of helm packages
     -a     Builds an archive for each helm package
-    -f     Bundle archive
+    -f     Import Bundle archive and push to registry. Requires a registry using -r option
     -r     Docker registry and port (default value is localhost:5000)
 EOF
   exit 1;
 }
 
-while getopts ":hpad:f:r:" options; do         
+while getopts ":hpaf:r:" options; do         
 
   case "${options}" in
-    d)
-      OS=${OPTARG}
-      GOARCH=amd64
-      [[ $OS == "linux" || $OS == "darwin" ]] && {
-        gloo_mesh_version=v2.2.6
-        filename="meshctl-${OS}-${GOARCH}"
-        wget https://storage.googleapis.com/meshctl/${gloo_mesh_version}/${filename}
-      } || {
-        invalid
-      }
-      ;;
     a) 
       pull
       ;;
     f)
       FILE=${OPTARG}
-      REGISTRY="localhost:5000"
+      [[ -z $REGISTRY ]] && REGISTRY="localhost:5000"
       [[ ! -f $FILE ]] && warning "File does not exist"
       ;;
     r)
@@ -293,6 +320,8 @@ while getopts ":hpad:f:r:" options; do
 done
 
 [[ ${OPTIND} == 1 ]] && usage 
+
+[[ ! -z $REGISTRY && -z $FILE ]] && info "Registry override requires an image bundle ex.; -r private.registry:5000 -f bundles/gloo-mesh-enterprise/gloo-mesh-enterprise-bundle.tar"
 
 [[ ! -z $FILE ]] && {
   echo "Pushing images to $REGISTRY..."
