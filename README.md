@@ -1,6 +1,12 @@
 # Bundler
 This generates an archive of Docker images for each Helm repository listed in the script.
 
+### Prequisities
+- jq      see [docs](https://mikefarah.gitbook.io/yq/) for instructions on installation for your platform
+- Bash 5+
+- yq      see [docs](https://stedolan.github.io/jq/download/) for instruction on installation for your platform
+- gnu-sed brew install gnu-sed
+
 ### Usage
 ```
   Usage: bundle [options]
