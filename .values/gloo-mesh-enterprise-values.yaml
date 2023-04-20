@@ -1,0 +1,6 @@
+legacyMetricsPipeline:
+  enabled: false
+metricsgateway:
+  enabled: true
+  service:
+    type: "LoadBalancer"
